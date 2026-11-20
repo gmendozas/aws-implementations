@@ -10,7 +10,7 @@ deploy it.
 | Project | Description | Documentation |
 | --- | --- | --- |
 | [txt2audio](./txt2audio/) | Converts short UTF-8 text files uploaded to Amazon S3 into MP3 audio using Amazon Polly, AWS Lambda, and AWS SAM. | [Project README](./txt2audio/README.md) |
-| [serverless-contact-form](./serverless-contact-form/) | Processes images uploaded to Amazon S3, creates JPEG thumbnails, and records processing details using SQS, Lambda, and DynamoDB. | [Project README](./serverless-contact-form/README.md) |
+| [event-driven image processor](./image-processing-mini/) | Processes images uploaded to Amazon S3, creates JPEG thumbnails, and records processing details using SQS, Lambda, and DynamoDB. | [Project README](./image-processing-mini/README.md) |
 
 More AWS portfolio projects can be added as sibling directories.
 
