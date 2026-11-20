@@ -18,9 +18,9 @@ used to try the workflow.
 
 ## Project documentation
 
-- [Architecture](doc/architecture.md): AWS components, request flow, permissions,
+- [Architecture](docs/architecture.md): AWS components, request flow, permissions,
   and system limits.
-- [Code style](doc/code-style.md): conventions for Python, SAM configuration,
+- [Code style](docs/code-style.md): conventions for Python, SAM configuration,
   and project documentation.
 
 ## Deploy

@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Process uploaded images asynchronously and record thumbnail details.
+
+Resources:
+  SourceImageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  ThumbnailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ImageProcessingDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ImageProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 345600
+      VisibilityTimeout: 360
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ImageProcessingDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  ImageProcessingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: event_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: event_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+
+  ImageUploadedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Send supported image uploads to the processing queue.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref SourceImageBucket
+          object:
+            key:
+              - suffix: .jpg
+              - suffix: .jpeg
+              - suffix: .png
+              - suffix: .webp
+      Targets:
+        - Arn: !GetAtt ImageProcessingQueue.Arn
+          Id: ImageProcessingQueue
+
+  AllowEventBridgeToSendImageEvents:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ImageProcessingQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ImageProcessingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt ImageUploadedRule.Arn
+
+  ImageProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: processor.handler
+      Runtime: python3.11
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          THUMBNAIL_BUCKET: !Ref ThumbnailBucket
+          IMAGE_PROCESSING_TABLE: !Ref ImageProcessingTable
+          MAX_IMAGE_BYTES: '10485760'
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref SourceImageBucket
+        - S3WritePolicy:
+            BucketName: !Ref ThumbnailBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ImageProcessingTable.Arn
+      Events:
+        ImageProcessingQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ImageProcessingQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  SourceImageBucketName:
+    Description: Upload supported image files to this bucket.
+    Value: !Ref SourceImageBucket
+  ThumbnailBucketName:
+    Description: Private bucket containing generated JPEG thumbnails.
+    Value: !Ref ThumbnailBucket
+  ImageProcessingQueueUrl:
+    Description: SQS queue buffering image processing events.
+    Value: !Ref ImageProcessingQueue
+  ImageProcessingDeadLetterQueueUrl:
+    Description: Dead-letter queue for messages that could not be processed.
+    Value: !Ref ImageProcessingDeadLetterQueue
+  ImageProcessingTableName:
+    Description: DynamoDB table containing image processing details.
+    Value: !Ref ImageProcessingTable
