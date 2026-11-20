@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Convert uploaded text articles to speech with Amazon Polly and save
+  MP3 audio to S3.
+
+Parameters:
+  PollyVoiceId:
+    Type: String
+    Default: Joanna
+    Description: >
+      Polly voice ID; the selected voice determines the spoken language.
+
+Resources:
+  SourceTextBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  AudioBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  AudioStorageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: store_audio.handler
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          AUDIO_BUCKET: !Ref AudioBucket
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref AudioBucket
+
+  TextToSpeechFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: synthesize.handler
+      Runtime: python3.11
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          AUDIO_STORAGE_FUNCTION: !Ref AudioStorageFunction
+          POLLY_VOICE_ID: !Ref PollyVoiceId
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref SourceTextBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - polly:SynthesizeSpeech
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt AudioStorageFunction.Arn
+
+  TextObjectCreatedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Invoke text-to-speech for uploaded .txt objects.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref SourceTextBucket
+          object:
+            key:
+              - suffix: .txt
+      Targets:
+        - Arn: !GetAtt TextToSpeechFunction.Arn
+          Id: TextToSpeechFunction
+
+  AllowEventBridgeToInvokeTextToSpeech:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TextToSpeechFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TextObjectCreatedRule.Arn
+
+Outputs:
+  SourceTextBucketName:
+    Description: Upload UTF-8 .txt articles to this bucket to start synthesis.
+    Value: !Ref SourceTextBucket
+  AudioBucketName:
+    Description: Private bucket containing the generated MP3 files.
+    Value: !Ref AudioBucket
