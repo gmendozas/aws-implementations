@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Manage tasks through an API Gateway HTTP API, Lambda, and DynamoDB.
+
+Resources:
+  TaskHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: '$default'
+
+  TaskTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: task_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: task_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  TaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: task_api.handler
+      Runtime: python3.11
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          TASK_TABLE: !Ref TaskTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Scan
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !GetAtt TaskTable.Arn
+      Events:
+        CreateTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskHttpApi
+            Path: /tasks
+            Method: POST
+        ListTasks:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskHttpApi
+            Path: /tasks
+            Method: GET
+        GetTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskHttpApi
+            Path: /tasks/{taskId}
+            Method: GET
+        UpdateTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskHttpApi
+            Path: /tasks/{taskId}
+            Method: PUT
+        CompleteTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskHttpApi
+            Path: /tasks/{taskId}/complete
+            Method: PATCH
+        DeleteTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskHttpApi
+            Path: /tasks/{taskId}
+            Method: DELETE
+
+  TaskFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${TaskFunction}
+      RetentionInDays: 14
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the unauthenticated task API.
+    Value: !Sub https://${TaskHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  TaskTableName:
+    Description: DynamoDB table containing task records.
+    Value: !Ref TaskTable

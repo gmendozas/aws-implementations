@@ -43,3 +43,4 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+http-client.env.json
